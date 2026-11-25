@@ -1,1 +1,114 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Admin</title><link rel="stylesheet" href="../css/style.css">
+<style>body{padding:2rem 5vw}label{display:block;margin:.7rem 0 .2rem}input,select,textarea{width:100%;padding:.6em;background:#1d1c16;color:var(--ink);border:1px solid var(--line);font:inherit}button{padding:.6em 1.1em;margin:.4rem .4rem 0 0;font:inherit;cursor:pointer}#msg{color:var(--pm);min-height:1.5em}.row{display:flex;justify-content:space-between;gap:1rem;border-bottom:1px solid var(--line);padding:.6rem 0;flex-wrap:wrap}</style></head><body>
+<h1>Admin</h1><p id="msg" role="status"></p>
+<form id="login"><label>Email<input id="em" type="email" autocomplete="username" required></label><label>Password<input id="pw" type="password" autocomplete="current-password" required></label><button class="btn">Sign in</button></form>
+<div id="app" hidden><p class="note">Before publishing, check every post: no confidential project details, client names, credentials or private data.</p>
+<button id="out">Sign out</button>
+<form id="f"><h2 id="ft">New post</h2><input type="hidden" id="id">
+<label>Panel<select id="panel"><option value="cyber">Cybersecurity</option><option value="software">Software engineering</option><option value="pm">Project management</option></select></label>
+<label>Title<input id="title" required></label><label>Description<textarea id="desc" rows="6"></textarea></label>
+<label>Category<input id="cat"></label><label>Date<input id="date" type="date"></label><label>Your role<input id="role"></label>
+<label>Technologies (comma separated)<input id="tech"></label><label>Links (one per line: Label | https://url)<textarea id="links" rows="3"></textarea></label>
+<label>Add photos or videos<input id="files" type="file" accept="image/*,video/*" multiple></label><p id="cur" class="meta"></p>
+<label>Status<select id="status"><option value="draft">Draft (hidden)</option><option value="published">Published</option></select></label>
+<button class="btn">Save post</button><button type="button" id="new">Clear form</button></form>
+<h2>Posts</h2><div id="list"></div>
+<hr><h2>My story: moments (shown around the globe)</h2>
+<form id="mf"><input type="hidden" id="mid"><label>Title<input id="mt" required></label>
+<label>Button text under the picture (for example: Read more, Explore this moment)<input id="mc" value="Read the story"></label>
+<label>Date<input id="md" type="date"></label><label>Order on the arc (1 = first)<input id="mo" type="number" value="1"></label>
+<label>The full story of this moment (as long as you like; leave a blank line between paragraphs)<textarea id="ms" rows="14"></textarea></label>
+<label>Photos or videos (the first one is the picture on the globe)<input id="mfiles" type="file" accept="image/*,video/*" multiple></label><p id="mcur" class="meta"></p>
+<label>Links (Label | https://url, one per line)<textarea id="ml" rows="2"></textarea></label>
+<label>Status<select id="mst"><option value="draft">Draft (hidden)</option><option value="published">Published</option></select></label>
+<button class="btn">Save moment</button><button type="button" id="mnew">Clear form</button></form><div id="mlist"></div>
+<hr><h2>Site content</h2><p class="meta">Everything on the public page is edited here. The boxes start with the built-in text; change it and press Save.</p>
+<form id="sf"><label>Story title<input id="s_journeyTitle"></label>
+<label>Your story, shown inside the globe (blank line between paragraphs; **bold** works)<textarea id="s_journey" rows="18"></textarea></label>
+<label>About (blank line between paragraphs)<textarea id="s_about" rows="6"></textarea></label>
+<label>Skills (one per line)<textarea id="s_skills" rows="5"></textarea></label>
+<label>Languages (one per line)<textarea id="s_languages" rows="2"></textarea></label>
+<label>Interests (one per line)<textarea id="s_interests" rows="3"></textarea></label>
+<label>Experience (each entry: line 1 title, line 2 place, then one bullet per line; blank line between entries)<textarea id="s_experience" rows="10"></textarea></label>
+<label>Education (same format as experience)<textarea id="s_education" rows="4"></textarea></label>
+<button class="btn">Save site content</button></form></div>
+<script src="../config.js"></script><script src="../js/defaults.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script><script>
+const CFG = window.CONFIG, createClient = window.supabase && window.supabase.createClient;
+const $ = (s) => document.querySelector(s), say = (t) => ($('#msg').textContent = t);
+if (!CFG.SUPABASE_URL) { say('Backend not connected yet. Follow the README setup steps, then reload.'); $('#login').hidden = true; throw 0; }
+const sb = createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY); let media = [];
+async function gate() {
+  const { data: { session } } = await sb.auth.getSession(); if (!session) return;
+  const { data } = await sb.from('admins').select('user_id').maybeSingle();
+  if (!data) { await sb.auth.signOut(); say('This account is not an administrator.'); return; }
+  $('#login').hidden = true; $('#app').hidden = false; say(''); list(); mlist(); loadSite();
+}
+$('#login').onsubmit = async (e) => { e.preventDefault(); const { error } = await sb.auth.signInWithPassword({ email: $('#em').value, password: $('#pw').value }); error ? say('Sign-in failed: ' + error.message) : gate(); };
+$('#out').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+const reset = () => { $('#f').reset(); $('#id').value = ''; media = []; $('#cur').textContent = ''; $('#ft').textContent = 'New post'; };
+$('#new').onclick = reset;
+$('#f').onsubmit = async (e) => {
+  e.preventDefault(); const files = [...$('#files').files];
+  try {
+    for (const [i, f] of files.entries()) {
+      say(`Uploading ${i + 1} of ${files.length}: ${f.name}`);
+      const path = `${crypto.randomUUID()}-${f.name.replace(/[^\w.-]/g, '_')}`;
+      const { error } = await sb.storage.from('media').upload(path, f); if (error) throw error;
+      media.push({ type: f.type.startsWith('video') ? 'video' : 'image', path, url: sb.storage.from('media').getPublicUrl(path).data.publicUrl, alt: prompt('Alt text (describe the photo) for ' + f.name, '') || '' });
+    }
+    const row = { panel: $('#panel').value, title: $('#title').value, description: $('#desc').value, category: $('#cat').value, role: $('#role').value, event_date: $('#date').value || null,
+      tech: $('#tech').value.split(',').map((s) => s.trim()).filter(Boolean), media, status: $('#status').value,
+      links: $('#links').value.split('\n').map((l) => l.split('|').map((s) => s.trim())).filter((a) => /^https?:\/\//.test(a[1] || a[0])).map((a) => (a[1] ? { label: a[0], url: a[1] } : { label: a[0], url: a[0] })) };
+    const id = $('#id').value, { error } = id ? await sb.from('posts').update(row).eq('id', id) : await sb.from('posts').insert(row);
+    if (error) throw error; say('Saved.'); reset(); list();
+  } catch (err) { say('Could not save: ' + err.message); }
+};
+async function list() {
+  const { data, error } = await sb.from('posts').select('*').order('created_at', { ascending: false }); if (error) return say(error.message);
+  $('#list').innerHTML = ''; if (!data.length) $('#list').textContent = 'No posts yet. Use the form above.';
+  for (const p of data) {
+    const r = document.createElement('div'); r.className = 'row'; r.innerHTML = `<span><b></b> <small>${p.panel} · ${p.status}</small></span><span></span>`; r.querySelector('b').textContent = p.title;
+    const b = (t, fn) => { const x = document.createElement('button'); x.textContent = t; x.onclick = fn; r.lastChild.append(x); };
+    b('Edit', () => { $('#id').value = p.id; $('#panel').value = p.panel; $('#title').value = p.title; $('#desc').value = p.description; $('#cat').value = p.category; $('#role').value = p.role; $('#date').value = p.event_date || ''; $('#tech').value = (p.tech || []).join(', '); $('#links').value = (p.links || []).map((l) => `${l.label} | ${l.url}`).join('\n'); $('#status').value = p.status; media = p.media || []; $('#cur').textContent = `${media.length} media file(s) attached`; $('#ft').textContent = 'Edit post'; scrollTo(0, 0); });
+    b(p.status === 'published' ? 'Unpublish' : 'Publish', async () => { await sb.from('posts').update({ status: p.status === 'published' ? 'draft' : 'published' }).eq('id', p.id); list(); });
+    b('Delete', async () => { if (!confirm(`Permanently delete "${p.title}" and its media?`)) return; const paths = (p.media || []).map((m) => m.path).filter(Boolean); if (paths.length) await sb.storage.from('media').remove(paths); await sb.from('posts').delete().eq('id', p.id); list(); });
+    $('#list').append(r);
+  }
+}
+const links = (t) => t.split('\n').map((l) => l.split('|').map((s) => s.trim())).filter((a) => /^https?:\/\//.test(a[1] || a[0])).map((a) => (a[1] ? { label: a[0], url: a[1] } : { label: a[0], url: a[0] }));
+const SK = ['journeyTitle', 'journey', 'about', 'skills', 'languages', 'interests', 'experience', 'education'];
+async function loadSite() { const { data } = await sb.from('site_content').select('*'); const o = {}; (data || []).forEach((r) => (o[r.key] = r.value)); const D = window.DEFAULTS || {}; SK.forEach((k) => ($('#s_' + k).value = o[k] != null ? o[k] : D[k] || '')); }
+$('#sf').onsubmit = async (e) => { e.preventDefault(); const { error } = await sb.from('site_content').upsert(SK.map((k) => ({ key: k, value: $('#s_' + k).value }))); say(error ? 'Could not save: ' + error.message : 'Site content saved. Refresh the public page to see it.'); };
+let mm = [];
+const mreset = () => { $('#mf').reset(); $('#mid').value = ''; $('#mc').value = 'Read the story'; mm = []; $('#mcur').textContent = ''; };
+$('#mnew').onclick = mreset;
+$('#mf').onsubmit = async (e) => {
+  e.preventDefault(); const files = [...$('#mfiles').files];
+  try {
+    for (const [i, f] of files.entries()) {
+      say(`Uploading ${i + 1} of ${files.length}: ${f.name}`); const v = f.type.startsWith('video');
+      const path = `${crypto.randomUUID()}-${f.name.replace(/[^\w.-]/g, '_')}`; const { error } = await sb.storage.from('media').upload(path, f); if (error) throw error;
+      mm.push({ type: v ? 'video' : 'image', path, url: sb.storage.from('media').getPublicUrl(path).data.publicUrl, alt: prompt(`Describe this ${v ? 'video' : 'photo'} for visitors who cannot see it (${f.name})`, '') || '' });
+    }
+    const row = { title: $('#mt').value, cta: $('#mc').value || 'Read the story', event_date: $('#md').value || null, sort: +$('#mo').value || 0, story: $('#ms').value, media: mm, status: $('#mst').value, links: links($('#ml').value) };
+    const id = $('#mid').value, { error } = id ? await sb.from('moments').update(row).eq('id', id) : await sb.from('moments').insert(row);
+    if (error) throw error; say('Moment saved.'); mreset(); mlist();
+  } catch (err) { say('Could not save: ' + err.message); }
+};
+async function mlist() {
+  const { data, error } = await sb.from('moments').select('*').order('sort'); if (error) return say(error.message);
+  $('#mlist').innerHTML = ''; if (!data.length) $('#mlist').textContent = 'No moments yet. Use the form above.';
+  for (const p of data) {
+    const r = document.createElement('div'); r.className = 'row'; r.innerHTML = '<span><b></b> <small></small></span><span></span>'; r.querySelector('b').textContent = p.title; r.querySelector('small').textContent = `#${p.sort} · ${p.status}`;
+    const b = (t, fn) => { const x = document.createElement('button'); x.textContent = t; x.onclick = fn; r.lastChild.append(x); };
+    b('Edit', () => { $('#mid').value = p.id; $('#mt').value = p.title; $('#mc').value = p.cta; $('#md').value = p.event_date || ''; $('#mo').value = p.sort; $('#ms').value = p.story; $('#ml').value = (p.links || []).map((l) => `${l.label} | ${l.url}`).join('\n'); $('#mst').value = p.status; mm = p.media || []; $('#mcur').textContent = `${mm.length} media file(s) attached (adding new files keeps these)`; scrollTo(0, $('#mf').offsetTop - 20); });
+    b(p.status === 'published' ? 'Unpublish' : 'Publish', async () => { await sb.from('moments').update({ status: p.status === 'published' ? 'draft' : 'published' }).eq('id', p.id); mlist(); });
+    b('Delete', async () => { if (!confirm(`Permanently delete "${p.title}" and its media?`)) return; const paths = (p.media || []).map((m) => m.path).filter(Boolean); if (paths.length) await sb.storage.from('media').remove(paths); await sb.from('moments').delete().eq('id', p.id); mlist(); });
+    $('#mlist').append(r);
+  }
+}
+
+gate();
+</script></body></html>
 
